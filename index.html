@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0a0e18" />
+    <title>Rival Patch</title>
+    <meta name="description" content="Retro fighter vs a live-patched AI rival (Kimi + OpenClaw)." />
+  </head>
+  <body>
+    <div id="arcade-shell">
+      <header id="arcade-header">
+        <a class="arcade-brand" href="/" aria-label="Rival Patch">
+          <img class="arcade-logo" src="/favicon.svg" width="44" height="44" alt="" />
+          <span class="arcade-titles">
+            <span class="arcade-title">RIVAL PATCH</span>
+            <span class="arcade-sub">PIXEL DOJO · KIMI PATCHES YOUR RIVAL</span>
+          </span>
+        </a>
+        <div id="rival-patch-host" class="rival-patch-host" aria-label="Live AI patch panel"></div>
+      </header>
+      <div id="arcade-stage">
+        <div id="app"></div>
+      </div>
+      <footer id="arcade-footer">
+        <p id="control-ticker" class="control-ticker" aria-live="polite">MOVE A/D · JUMP W · CROUCH S · BLOCK Q</p>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
