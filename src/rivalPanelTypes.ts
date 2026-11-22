@@ -1,0 +1,1 @@
+export type AiStatus = 'offline' | 'live' | 'busy' | 'error'

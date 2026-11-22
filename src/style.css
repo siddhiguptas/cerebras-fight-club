@@ -1,0 +1,264 @@
+:root {
+  color: #f8fafc;
+  --cabinet-bg: #080b12;
+  --cabinet-edge: #1e293b;
+  --cabinet-neon: #334155;
+  --arcade-ink: #f5f0e6;
+  --arcade-gold: #fde68a;
+  --arcade-width: min(972px, calc(100vw - 16px));
+  font-family: Consolas, 'Courier New', monospace;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: none;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100svh;
+  overflow: hidden;
+  background: var(--cabinet-bg);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+#arcade-shell {
+  width: 100%;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 8px 12px;
+  background:
+    radial-gradient(ellipse 90% 60% at 50% 0%, #121a2b 0%, var(--cabinet-bg) 55%),
+    repeating-linear-gradient(
+      90deg,
+      transparent,
+      transparent 3px,
+      rgba(255, 255, 255, 0.015) 3px,
+      rgba(255, 255, 255, 0.015) 4px
+    ),
+    var(--cabinet-bg);
+}
+
+#arcade-shell::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.28;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.12) 2px,
+    rgba(0, 0, 0, 0.12) 4px
+  );
+}
+
+#arcade-header,
+#arcade-stage,
+#arcade-footer {
+  position: relative;
+  z-index: 2;
+  width: var(--arcade-width);
+}
+
+#arcade-header {
+  display: grid;
+  grid-template-columns: 1fr minmax(220px, 48%);
+  gap: 10px;
+  align-items: stretch;
+  padding: 8px 10px;
+  border: 2px solid var(--cabinet-edge);
+  background: linear-gradient(180deg, #111827 0%, #0c1220 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 4px 0 #05070c;
+}
+
+.arcade-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: inherit;
+  min-width: 0;
+}
+
+.arcade-logo {
+  flex-shrink: 0;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  border: 2px solid #475569;
+  background: #0a0e18;
+  box-shadow: 2px 2px 0 #000;
+}
+
+.arcade-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.arcade-title {
+  font-size: clamp(14px, 3.2vw, 18px);
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--arcade-gold);
+  text-shadow: 0 0 12px rgba(253, 230, 138, 0.25);
+}
+
+.arcade-sub {
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: #94a3b8;
+  text-transform: uppercase;
+}
+
+.rival-patch-host {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+
+#rival-patch-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: 4px 0 2px;
+  min-width: 0;
+}
+
+#rival-patch-panel .rp-status {
+  padding: 4px 8px;
+  border: 1px solid #334155;
+  background: #0f172a;
+  color: #5eead4;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+#rival-patch-panel .rp-status[data-state='busy'] {
+  color: #fde68a;
+}
+
+#rival-patch-panel .rp-status[data-state='offline'],
+#rival-patch-panel .rp-status[data-state='error'] {
+  color: #f87171;
+}
+
+#rival-patch-panel .rp-complaint-row {
+  display: flex;
+  gap: 6px;
+}
+
+#rival-patch-panel input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid #475569;
+  background: #020617;
+  color: var(--arcade-ink);
+  font: inherit;
+  font-size: 11px;
+}
+
+#rival-patch-panel button {
+  padding: 6px 12px;
+  border: 1px solid #fb923c;
+  background: #c2410c;
+  color: #fff7ed;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: 0.1em;
+}
+
+#rival-patch-panel[data-match='off'] input,
+#rival-patch-panel[data-match='off'] button {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+#arcade-stage {
+  padding: 4px;
+  border: 2px solid var(--cabinet-edge);
+  background: #0a0e18;
+  box-shadow:
+    inset 0 0 48px rgba(0, 0, 0, 0.35),
+    0 6px 24px rgba(0, 0, 0, 0.55);
+}
+
+#app {
+  line-height: 0;
+}
+
+#arcade-footer {
+  padding: 6px 8px;
+  border: 1px solid #1e293b;
+  background: rgba(15, 23, 42, 0.85);
+  text-align: center;
+}
+
+.control-ticker {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #cbd5e1;
+  min-height: 1.2em;
+  transition: opacity 0.25s ease;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: calc(100svh - 140px);
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+@media (max-width: 720px) {
+  #arcade-header {
+    grid-template-columns: 1fr;
+  }
+
+  .arcade-sub {
+    font-size: 8px;
+  }
+
+  #rival-patch-panel .rp-complaint-row {
+    flex-wrap: wrap;
+  }
+}
