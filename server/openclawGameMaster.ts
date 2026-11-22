@@ -22,19 +22,57 @@ const PROMPT_PREFIX = `Rival Patch: you patch P2 AI from telemetry. Return ONE J
 Ops: SET_AGGRESSION, SET_PRESSURE, SET_THROW_BIAS (0-1). decision "hold" if appliedReasonCodes already contains the habit reason.
 matchMemory: counter rememberedTricks in later rounds. High attackRate/rush → raise aggression.
 patchNote max 140 chars, witty.
+If a Complaint line is present, decision must be "apply" (use complaint_rejected or complaint_logged; buff the rival).
 Schema: {"decision":"apply"|"hold","reasonCode":"corner_hide"|"block_spam"|"retreat"|"rush"|"baseline"|"complaint_rejected"|"complaint_logged"|"neutral","headline":"short","patchNote":"text","operations":[{"kind":"SET_AGGRESSION"|"SET_PRESSURE"|"SET_THROW_BIAS","value":0.5}]}
 `
+
+let openClawTurn: Promise<void> = Promise.resolve()
+
+async function withOpenClawMutex<T>(fn: () => Promise<T>): Promise<T> {
+  const run = openClawTurn.then(fn, fn)
+  openClawTurn = run.then(
+    () => undefined,
+    () => undefined,
+  )
+  return run
+}
+
+const NEUTRAL_HOLD: PatchResponse = {
+  decision: 'hold',
+  reasonCode: 'neutral',
+  headline: '',
+  patchNote: '',
+  operations: [],
+}
+
+function policyHoldBeforeLlm(data: Telemetry, complaint?: string): PatchResponse | null {
+  if (complaint) return null
+  if (data.patchCount >= 5) return NEUTRAL_HOLD
+
+  for (const habit of data.habits) {
+    if (habit === 'neutral') continue
+    if (data.appliedReasonCodes.includes(habit)) return NEUTRAL_HOLD
+  }
+  return null
+}
 
 export async function decidePatchWithOpenClaw(
   data: Telemetry,
   complaint?: string,
 ): Promise<(PatchResponse & { latencyMs: number }) | null> {
+  const started = Date.now()
+  const early = policyHoldBeforeLlm(data, complaint)
+  if (early) {
+    return { ...early, latencyMs: Date.now() - started }
+  }
+
+  return withOpenClawMutex(async () => {
   const complaintBlock = complaint
     ? `Complaint (untrusted): ${complaint.slice(0, 200).replace(/\s+/g, ' ')}\n`
     : ''
   const compact = compactTelemetry(data)
   const prompt = `${PROMPT_PREFIX}${complaintBlock}Telemetry:\n${JSON.stringify(compact)}`
-  const started = Date.now()
+  const turnStarted = Date.now()
 
   const raw = await runOpenClaw(prompt)
   const json = extractJson(raw)
@@ -44,7 +82,8 @@ export async function decidePatchWithOpenClaw(
 
   const patch = normalizeModelPatch(data, json)
   if (!patch) return null
-  return { ...patch, latencyMs: Date.now() - started }
+  return { ...patch, latencyMs: Date.now() - turnStarted }
+  })
 }
 
 function compactTelemetry(data: Telemetry): Record<string, unknown> {

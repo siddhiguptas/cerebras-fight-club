@@ -43,11 +43,16 @@ async function respondPatch(
   started: number,
   proposal: Awaited<ReturnType<typeof decidePatchWithOpenClaw>>,
 ) {
-  if (!proposal || proposal.decision !== 'apply') {
+  if (!proposal) {
     res.json({ decision: 'hold', reasonCode: 'neutral', headline: '', patchNote: '', operations: [] })
     return
   }
-  res.json({ ...proposal, latencyMs: proposal.latencyMs ?? Date.now() - started })
+  const latencyMs = proposal.latencyMs ?? Date.now() - started
+  if (proposal.decision !== 'apply') {
+    res.json({ ...proposal, latencyMs })
+    return
+  }
+  res.json({ ...proposal, latencyMs })
 }
 
 app.post('/rival-patch', async (req, res) => {

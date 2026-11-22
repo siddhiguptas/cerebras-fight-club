@@ -167,6 +167,8 @@ Fight for a few seconds, repeat a habit (rush, corner, block), or send a **compl
 
 ## Tests
 
+Live OpenClaw only — there is **no mock Kimi fallback** on `/rival-patch` or `/rival-complaint`.
+
 ```bash
 npm test              # Patch policy unit tests
 npm run test:api      # HTTP smoke (server + Gateway must be running)
