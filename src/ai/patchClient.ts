@@ -8,8 +8,15 @@ export async function probeRivalBackend(): Promise<BackendStatus> {
   try {
     const response = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(2500) })
     if (!response.ok) return 'error'
-    const data = (await response.json()) as { ok?: boolean; mode?: string }
-    return data.ok && data.mode === 'live' ? 'live' : 'error'
+    const data = (await response.json()) as {
+      ok?: boolean
+      mode?: string
+      harness?: string
+      model?: string
+    }
+    if (!data.ok || data.mode !== 'live' || data.harness !== 'openclaw') return 'error'
+    if (data.model && !data.model.includes('kimi-k3.1-pro')) return 'error'
+    return 'live'
   } catch {
     return 'offline'
   }

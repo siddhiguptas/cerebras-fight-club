@@ -2,13 +2,25 @@
 
 A retro pixel fighter where you play Player 1 and the rival is controlled by AI. While you fight, the game watches how you play and **patches the rival in real time** — tuned by **Kimi K3.1 Pro on Cerebras** through **OpenClaw**.
 
-Built for the **Cerebras x Kimi K3.1 Pro x OpenClaw Weekend Hackathon** (#KimiOnCerebras).
+Built for the **Cerebras × Kimi K3.1 Pro × OpenClaw Weekend Hackathon** (#KimiOnCerebras).
 
 **By Siddhi Gupta**
 
 - LinkedIn: [linkedin.com/in/siddhiguptas](https://linkedin.com/in/siddhiguptas)
 - X: [x.com/siddhiguptas](https://x.com/siddhiguptas)
 - GitHub: [github.com/siddhiguptas](https://github.com/siddhiguptas)
+
+---
+
+## Hackathon requirements (this project)
+
+| Requirement | How Rival Patch satisfies it |
+|-------------|------------------------------|
+| **OpenClaw harness** (required) | Every patch runs `openclaw agent` via **OpenClaw Gateway** by default (`npm run gateway` + `OPENCLAW_TRANSPORT=gateway`). No mock LLM path in production. |
+| **Kimi K3.1 Pro on Cerebras** (central) | Model `moonshotai-kimi-k3.1-pro-trial` through OpenClaw as `cerebras/moonshotai-kimi-k3.1-pro-trial`, using your **Cerebras API key**. |
+| **Speed in the UX** | Fight stays on local AI; Kimi returns patch JSON in ~few seconds (fresh OpenClaw session per patch) while you are still in the round. |
+
+Model id from the hackathon brief: **`moonshotai-kimi-k3.1-pro-trial`**.
 
 ---
 
@@ -39,8 +51,8 @@ You fight a bot locally every frame. Kimi does not steer every button press. It 
 Browser (Phaser)
   → telemetry (position, block rate, rush, etc.)
   → Node backend (/rival-patch, /rival-complaint)
-  → OpenClaw agent (Gateway)
-  → Kimi K3.1 Pro on Cerebras
+  → OpenClaw Gateway → openclaw agent (CLI harness)
+  → Kimi K3.1 Pro on Cerebras (moonshotai-kimi-k3.1-pro-trial)
   → JSON patch (SET_AGGRESSION | SET_PRESSURE | SET_THROW_BIAS)
   → validated + applied to RivalBrain
 ```
@@ -48,57 +60,85 @@ Browser (Phaser)
 **Two layers**
 
 1. **RivalBrain (local)** — moves, blocks, and attacks every frame so the fight stays responsive.
-2. **Game Master (Kimi via OpenClaw)** — reads a compact telemetry summary and returns a small patch. When a habit is detected quickly, the rival gets an immediate counter-tune, then Kimi’s formal patch and note follow.
+2. **Game Master (Kimi via OpenClaw)** — reads compact telemetry and returns a small patch. When a habit is detected quickly, the rival gets an immediate counter-tune, then Kimi’s formal patch and note follow.
 
 **Between rounds**, the game stores habits and patch history. Round two sends `matchMemory` to Kimi so the rival can prep for tricks you already used.
 
-**Model:** `cerebras/moonshotai-kimi-k3.1-pro-trial`  
-**Harness:** OpenClaw Gateway + `openclaw agent` (hackathon requirement)
-
-**Latency:** Each patch uses a **fresh OpenClaw session** (the default main session can grow to 17k+ tokens and stall for minutes). The server sends **compact telemetry**, `thinking off`, and optional `OPENCLAW_TRANSPORT=exec` for embedded runs without Gateway (~8s typical per patch vs 25–40s+ before).
+**Latency:** Each patch uses a **fresh OpenClaw session** (avoids bloated main-session context). Optional `OPENCLAW_TRANSPORT=exec` is an embedded OpenClaw fallback without Gateway — still the OpenClaw harness, but use **Gateway for demos**.
 
 ---
 
-## Stack
+## Prerequisites
 
-- **Client:** Vite, TypeScript, Phaser 3
-- **Server:** Node, Express, Zod
-- **AI:** OpenClaw, Kimi K3.1 Pro on Cerebras
-- **Game logic:** `src/ai/` (telemetry, rival brain, match memory)
+Before you run the full stack:
+
+1. **Node.js 20+** and npm
+2. **Cerebras Cloud** account and **API key** (hackathon access to Kimi K3.1 Pro trial)
+3. **OpenClaw** installed and on your PATH ([OpenClaw docs](https://docs.openclaw.ai/))
+4. OpenClaw configured to call **Cerebras** with `CEREBRAS_API_KEY` in your environment (same key as this app’s `.env`)
+
+You do **not** need OpenClaw to open the game UI, but you **do** need **Gateway + server + OpenClaw** for live Kimi patch notes and complaints.
 
 ---
 
 ## Setup
 
 ```bash
+cd fighting-game
 cp .env.example .env
-# Add CEREBRAS_API_KEY — never commit .env
+```
+
+Edit `.env`:
+
+- Set `CEREBRAS_API_KEY` (never commit `.env`)
+- Set `OPENCLAW_BIN` if `openclaw` is not already on PATH
+- Leave **`OPENCLAW_TRANSPORT=gateway`** unless you know you want the exec fallback
+
+```bash
 npm install
 ```
 
----
-
-## Run
-
-Three terminals:
+Quick checks:
 
 ```bash
-npm run gateway   # OpenClaw Gateway (required)
-npm run server      # Live Kimi patch API on :8787
-npm run dev         # Game on http://127.0.0.1:5173
+openclaw --version
+# Ensure Kimi trial is available via OpenClaw + Cerebras (per your hackathon access)
 ```
-
-Health check: `http://localhost:8787/health` should report `mode: live`.
 
 ---
 
-## Play
+## Run (default — OpenClaw Gateway)
 
-- **You:** Player 1 only (keyboard; touch overlay on mobile).
-- **Rival:** AI only; patches apply mid-round and across rounds.
-- **Header:** live AI status and complaint box (talks to the same Kimi path).
+Use **three terminals** (order matters: gateway first):
 
-Footer rotates short control hints (move, fight, specials).
+```bash
+npm run gateway   # OpenClaw Gateway on :18789 (required for default transport)
+npm run server    # Patch API on :8787 — spawns openclaw agent per request
+npm run dev       # Game on http://127.0.0.1:5173
+```
+
+**Verify**
+
+```bash
+curl -s http://localhost:8787/health | python3 -m json.tool
+```
+
+Expect `harness: "openclaw"`, `transport: "gateway"`, and `model` containing `cerebras/moonshotai-kimi-k3.1-pro-trial`. In-game header should show **Kimi live**.
+
+Fight for a few seconds, repeat a habit (rush, corner, block), or send a **complaint** in the panel — you should see a patch card when Kimi returns `apply`.
+
+---
+
+## Play (game only)
+
+| What | Command |
+|------|---------|
+| Fights, local rival AI | `npm run dev` only |
+| Live Kimi patches | `gateway` + `server` + `dev` (above) |
+
+- **You:** Player 1 (keyboard; touch overlay on mobile).
+- **Rival:** AI + Kimi tuning mid-match and between rounds.
+- **Header:** AI status and complaint box (same OpenClaw path).
 
 ---
 
@@ -106,10 +146,22 @@ Footer rotates short control hints (move, fight, specials).
 
 | Variable | Purpose |
 |----------|---------|
-| `CEREBRAS_API_KEY` | Credentials for Kimi on Cerebras (server + OpenClaw) |
-| `OPENCLAW_BIN` | Optional path to `openclaw` |
+| `CEREBRAS_API_KEY` | **Required** for server and OpenClaw → Cerebras Kimi K3.1 Pro |
+| `OPENCLAW_BIN` | Path to `openclaw` CLI if not on PATH |
+| `OPENCLAW_TRANSPORT` | **`gateway`** (default, hackathon demo) or `exec` (optional, no Gateway) |
+| `OPENCLAW_CONFIG` | Used only when `OPENCLAW_TRANSPORT=exec` |
+| `OPENCLAW_TIMEOUT` | Seconds per OpenClaw agent turn (default 28) |
 | `RIVAL_PORT` | API port (default 8787) |
 | `VITE_RIVAL_API` | Optional API URL for remote client |
+
+---
+
+## Stack
+
+- **Client:** Vite, TypeScript, Phaser 3
+- **Server:** Node, Express, Zod
+- **AI:** OpenClaw harness + Kimi K3.1 Pro on Cerebras
+- **Game logic:** `src/ai/` (telemetry, rival brain, match memory)
 
 ---
 
@@ -117,7 +169,7 @@ Footer rotates short control hints (move, fight, specials).
 
 ```bash
 npm test              # Patch policy unit tests
-npm run test:api      # HTTP smoke (server + Gateway running)
+npm run test:api      # HTTP smoke (server + Gateway must be running)
 npm run test:rival    # Playwright E2E
 ```
 

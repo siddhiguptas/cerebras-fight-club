@@ -1,7 +1,11 @@
 import 'dotenv/config'
 import cors from 'cors'
 import express from 'express'
-import { decidePatchWithOpenClaw } from './openclawGameMaster.js'
+import {
+  decidePatchWithOpenClaw,
+  HACKATHON_MODEL_ID,
+  OPENCLAW_MODEL,
+} from './openclawGameMaster.js'
 import { complaintSchema, telemetrySchema } from './schemaTypes.js'
 
 const app = express()
@@ -15,13 +19,21 @@ if (!process.env.CEREBRAS_API_KEY) {
   process.exit(1)
 }
 
+const transport = (process.env.OPENCLAW_TRANSPORT ?? 'gateway').toLowerCase()
+
 app.get('/health', (_req, res) => {
   res.json({
     ok: true,
     mode: 'live',
     harness: 'openclaw',
-    transport: (process.env.OPENCLAW_TRANSPORT ?? 'gateway').toLowerCase(),
-    model: 'cerebras/moonshotai-kimi-k3.1-pro-trial',
+    hackathon: {
+      kimiOnCerebras: true,
+      modelId: HACKATHON_MODEL_ID,
+      openclawHarness: true,
+    },
+    transport,
+    provider: 'cerebras',
+    model: OPENCLAW_MODEL,
     product: 'Rival Patch',
   })
 })
@@ -74,5 +86,9 @@ app.post('/rival-complaint', async (req, res) => {
 })
 
 app.listen(port, () => {
-  console.log(`Rival Patch backend on http://localhost:${port} (OpenClaw + Kimi live only)`)
+  console.log(`Rival Patch backend on http://localhost:${port}`)
+  console.log(`Harness: OpenClaw (${transport}) · Model: ${OPENCLAW_MODEL}`)
+  if (transport === 'gateway') {
+    console.log('Start OpenClaw Gateway in another terminal: npm run gateway (port 18789)')
+  }
 })

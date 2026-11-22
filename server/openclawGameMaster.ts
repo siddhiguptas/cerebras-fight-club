@@ -8,7 +8,11 @@ import type { telemetrySchema } from './schemaTypes.js'
 type Telemetry = z.infer<typeof telemetrySchema>
 
 const OPENCLAW = process.env.OPENCLAW_BIN ?? `${process.env.HOME}/.openclaw/bin/openclaw`
-const MODEL = 'cerebras/moonshotai-kimi-k3.1-pro-trial'
+/** Hackathon model id (Cerebras Inference API / OpenClaw). */
+export const HACKATHON_MODEL_ID = 'moonshotai-kimi-k3.1-pro-trial'
+export const OPENCLAW_MODEL = `cerebras/${HACKATHON_MODEL_ID}`
+const MODEL = OPENCLAW_MODEL
+/** Default `gateway` = standard OpenClaw harness (hackathon requirement). `exec` is optional fallback only. */
 const TRANSPORT = (process.env.OPENCLAW_TRANSPORT ?? 'gateway').toLowerCase()
 const OPENCLAW_CONFIG = process.env.OPENCLAW_CONFIG ?? `${process.env.HOME}/.openclaw/openclaw.json`
 const OPENCLAW_TIMEOUT = Number(process.env.OPENCLAW_TIMEOUT ?? 28)
