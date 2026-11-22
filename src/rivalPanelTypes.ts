@@ -1,1 +1,1 @@
-export type AiStatus = 'offline' | 'live' | 'busy' | 'error'
+export type AiStatus = 'offline' | 'live' | 'busy' | 'limited' | 'error'

@@ -1,18 +1,36 @@
 import 'dotenv/config'
 import cors from 'cors'
 import express from 'express'
+import { jsonForInference } from './cerebrasErrors.js'
 import {
+  decideMatchStartWithOpenClaw,
   decidePatchWithOpenClaw,
   HACKATHON_MODEL_ID,
   OPENCLAW_MODEL,
 } from './openclawGameMaster.js'
-import { complaintSchema, telemetrySchema } from './schemaTypes.js'
+import { complaintSchema, matchStartSchema, telemetrySchema } from './schemaTypes.js'
 
 const app = express()
 app.use(cors())
 app.use(express.json({ limit: '64kb' }))
 
 const port = Number(process.env.RIVAL_PORT ?? 8787)
+/** Upper bound so clients do not hang if Gateway/OpenClaw stalls (ms). */
+const HTTP_OPENCLAW_MS = Number(process.env.RIVAL_HTTP_TIMEOUT ?? 55_000)
+
+async function withHttpTimeout<T>(fn: () => Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      fn(),
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('OpenClaw request timed out')), HTTP_OPENCLAW_MS)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
 
 if (!process.env.CEREBRAS_API_KEY) {
   console.error('CEREBRAS_API_KEY is required. Copy .env.example to .env and set your key.')
@@ -55,6 +73,23 @@ async function respondPatch(
   res.json({ ...proposal, latencyMs })
 }
 
+app.post('/rival-match-start', async (req, res) => {
+  const parsed = matchStartSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid match start', details: parsed.error.flatten() })
+    return
+  }
+
+  const started = Date.now()
+  try {
+    const proposal = await withHttpTimeout(() => decideMatchStartWithOpenClaw(parsed.data))
+    await respondPatch(res, started, proposal)
+  } catch (error) {
+    const { status, body } = jsonForInference(error)
+    res.status(status).json(body)
+  }
+})
+
 app.post('/rival-patch', async (req, res) => {
   const parsed = telemetrySchema.safeParse(req.body)
   if (!parsed.success) {
@@ -64,11 +99,11 @@ app.post('/rival-patch', async (req, res) => {
 
   const started = Date.now()
   try {
-    const proposal = await decidePatchWithOpenClaw(parsed.data)
+    const proposal = await withHttpTimeout(() => decidePatchWithOpenClaw(parsed.data))
     await respondPatch(res, started, proposal)
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'patch failed'
-    res.status(503).json({ error: message })
+    const { status, body } = jsonForInference(error)
+    res.status(status).json(body)
   }
 })
 
@@ -82,11 +117,11 @@ app.post('/rival-complaint', async (req, res) => {
   const started = Date.now()
   const { complaint, ...telemetry } = parsed.data
   try {
-    const proposal = await decidePatchWithOpenClaw(telemetry, complaint)
+    const proposal = await withHttpTimeout(() => decidePatchWithOpenClaw(telemetry, complaint))
     await respondPatch(res, started, proposal)
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'complaint failed'
-    res.status(503).json({ error: message })
+    const { status, body } = jsonForInference(error)
+    res.status(status).json(body)
   }
 })
 

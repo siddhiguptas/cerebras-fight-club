@@ -20,6 +20,35 @@ describe('rival patch API', () => {
     expect(json.hackathon?.modelId).toBe('moonshotai-kimi-k3.1-pro-trial')
   })
 
+  it('match-start returns Kimi loadout via OpenClaw', { timeout: 90_000 }, async () => {
+    const response = await fetch(`${BASE}/rival-match-start`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: `api-test-match-${Date.now()}`,
+        p1Fighter: 'kai',
+        p2Fighter: 'nova',
+      }),
+    })
+    expect(response.ok).toBe(true)
+    const json = (await response.json()) as {
+      decision: string
+      reasonCode: string
+      operations?: Array<{ kind: string; value: number }>
+      patchNote?: string
+      latencyMs?: number
+    }
+    expect(json.decision).toBe('apply')
+    expect(json.reasonCode).toBe('baseline')
+    expect((json.operations ?? []).length).toBeGreaterThan(0)
+    for (const op of json.operations ?? []) {
+      expect(op.value).toBeGreaterThanOrEqual(0)
+      expect(op.value).toBeLessThanOrEqual(1)
+    }
+    expect(json.patchNote?.length).toBeGreaterThan(0)
+    expect(json.latencyMs).toBeGreaterThan(0)
+  })
+
   it('patch endpoint dedupes habits without calling Kimi', async () => {
     const body = {
       sessionId: 'api-test',

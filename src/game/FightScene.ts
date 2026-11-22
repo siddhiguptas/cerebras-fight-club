@@ -1,8 +1,14 @@
 import Phaser from 'phaser'
 import { DEFAULT_TUNING, RivalBrain } from '../ai/rivalBrain'
 import type { BackendStatus } from '../ai/patchClient'
-import { fetchRivalComplaint, fetchRivalPatch, probeRivalBackend } from '../ai/patchClient'
-import { onComplaint, setAiStatus, setMatchActive } from '../rivalPanel'
+import {
+  fetchRivalComplaint,
+  fetchRivalMatchStart,
+  type PatchFetchResult,
+  fetchRivalPatch,
+  probeRivalBackend,
+} from '../ai/patchClient'
+import { isComplaintInputFocused, onComplaint, setAiStatus, setMatchActive } from '../rivalPanel'
 import { MatchMemory } from '../ai/matchMemory'
 import { FightTelemetry } from '../ai/telemetry'
 import type { HabitCode } from '../ai/types'
@@ -29,6 +35,11 @@ type AssetKey =
   | 'luna'
   | 'titan'
 const ROSTER: AssetKey[] = ['kai', 'nova', 'dragon', 'talon', 'ryu', 'kara', 'blaze', 'cyberon', 'shadow', 'luna', 'titan']
+
+function pickRandomRival(exclude: AssetKey): AssetKey {
+  const pool = ROSTER.filter((fighter) => fighter !== exclude)
+  return pool[Math.floor(Math.random() * pool.length)] ?? 'nova'
+}
 type GameMode = 'select' | 'intro' | 'fight' | 'roundOver' | 'matchOver'
 type FighterState =
   | 'idle'
@@ -113,6 +124,8 @@ type Fighter = {
   specialCooldown: number
   lastLeftTap: number
   lastRightTap: number
+  /** Ms before attacks/ specials after leaving hitstun (longer for P1). */
+  actionLockMs: number
 }
 
 type FighterConfig = {
@@ -626,12 +639,14 @@ export class FightScene extends Phaser.Scene {
   private hudPipsP1: Phaser.GameObjects.Image[] = []
   private hudPipsP2: Phaser.GameObjects.Image[] = []
   private readonly rivalBrain = new RivalBrain()
-  private readonly telemetry = new FightTelemetry()
+  private telemetry = new FightTelemetry()
   private readonly matchMemory = new MatchMemory()
   private readonly instantReflex = new Set<string>()
   private lastPatchRequestAt = 0
-  private readonly patchMinGapMs = 2200
-  private readonly patchPollMs = 3500
+  private readonly patchMinGapMs = 2800
+  private readonly patchPollMs = 4500
+  private aiBackoffUntil = 0
+  private activePatchGapMs = 2800
   private patchBanner!: Phaser.GameObjects.Text
   private patchStatus!: Phaser.GameObjects.Text
   private patchCount = 0
@@ -642,6 +657,7 @@ export class FightScene extends Phaser.Scene {
   private readonly appliedPatches: PatchProposal[] = []
   private readonly appliedReasonCodes = new Set<string>()
   private backendMode: BackendStatus = 'offline'
+  private matchBootBusy = false
 
   constructor() {
     super('FightScene')
@@ -902,15 +918,20 @@ export class FightScene extends Phaser.Scene {
       if (this.hitStopMs > 0) {
         this.hitStopMs = Math.max(0, this.hitStopMs - dt)
       } else {
-        this.roundTime = Math.max(0, this.roundTime - dt / 1000)
-        this.telemetry.track(this.playerOne, this.playerTwo)
-        this.rivalBrain.tick(this.playerTwo, this.playerOne, dt)
-        this.maybeRequestRivalPatch(time)
-        this.updateFighter(this.playerOne, this.playerTwo, dt)
-        this.updateFighter(this.playerTwo, this.playerOne, dt)
-        this.updateProjectiles(dt)
-        this.resolveBodyPush()
-        this.checkRoundEnd()
+        const typingComplaint = isComplaintInputFocused()
+        if (!typingComplaint) {
+          this.roundTime = Math.max(0, this.roundTime - dt / 1000)
+          this.telemetry.track(this.playerOne, this.playerTwo)
+          this.rivalBrain.tick(this.playerTwo, this.playerOne, dt)
+          this.maybeRequestRivalPatch(time)
+        }
+        this.updateFighter(this.playerOne, this.playerTwo, dt, typingComplaint)
+        this.updateFighter(this.playerTwo, this.playerOne, dt, false)
+        if (!typingComplaint) {
+          this.updateProjectiles(dt)
+          this.resolveBodyPush()
+          this.checkRoundEnd()
+        }
       }
     }
 
@@ -970,7 +991,7 @@ export class FightScene extends Phaser.Scene {
     this.input.on('pointerdown', () => {
       this.unlockAudio()
       if (this.mode === 'select') {
-        this.startMatch()
+        if (!this.matchBootBusy) this.startMatch()
       } else if (this.mode === 'roundOver' || this.mode === 'matchOver') {
         this.advanceAfterRound()
       }
@@ -983,9 +1004,13 @@ export class FightScene extends Phaser.Scene {
   }
 
   private handleKey(event: KeyboardEvent): void {
+    if (isComplaintInputFocused()) return
+
     if (this.mode === 'select') {
+      if (this.matchBootBusy) return
       if (event.code === 'KeyA' || event.code === 'KeyD') {
         this.selected.p1 = this.cycleFighter(this.selected.p1, event.code === 'KeyA' ? -1 : 1)
+        this.selected.p2 = pickRandomRival(this.selected.p1)
         this.playSound('menu')
       }
       if (event.code === 'Enter' || event.code === 'Space') {
@@ -1005,8 +1030,10 @@ export class FightScene extends Phaser.Scene {
   private enterSelect(): void {
     this.mode = 'select'
     this.modeTime = 0
+    this.matchBootBusy = false
     this.matchWinner = null
     this.roundNumber = 1
+    this.selected.p2 = pickRandomRival(this.selected.p1)
     this.showWordArt(null)
     this.playMusic('menu')
     this.clearCombatAssets()
@@ -1057,6 +1084,14 @@ export class FightScene extends Phaser.Scene {
   }
 
   private startMatch(): void {
+    if (this.matchBootBusy) return
+    this.matchBootBusy = true
+    this.selected.p2 = pickRandomRival(this.selected.p1)
+    this.playSound('menu')
+    void this.bootstrapNewMatch()
+  }
+
+  private async bootstrapNewMatch(): Promise<void> {
     this.roundNumber = 1
     this.matchWinner = null
     this.playerOne.wins = 0
@@ -1068,7 +1103,36 @@ export class FightScene extends Phaser.Scene {
     this.instantReflex.clear()
     this.matchMemory.clear()
     this.rivalBrain.tuning = { ...DEFAULT_TUNING }
+    this.telemetry = new FightTelemetry()
+
     setMatchActive(true)
+    setAiStatus('busy')
+
+    const loadout = await fetchRivalMatchStart({
+      sessionId: this.telemetry.sessionId,
+      p1Fighter: this.selected.p1,
+      p2Fighter: this.selected.p2,
+    })
+
+    if (loadout.kind === 'patch' && loadout.data.decision === 'apply' && loadout.data.operations.length > 0) {
+      this.clearAiBackoff()
+      const patch = loadout.data
+      this.rivalBrain.applyOperations(patch.operations)
+      this.appliedPatches.push(patch)
+      if (patch.patchNote) this.matchMemory.rememberPatchNote(patch.patchNote)
+      const latency = patch.latencyMs != null ? ` · ${patch.latencyMs}ms` : ''
+      this.patchBanner.setText(`MATCH START · Kimi loadout${latency}\n${patch.headline}\n${patch.patchNote}`)
+      this.patchBanner.setVisible(true)
+      this.time.delayedCall(7000, () => {
+        if (this.mode === 'intro' || this.mode === 'fight') this.patchBanner.setVisible(false)
+      })
+    } else if (loadout.kind === 'failure') {
+      this.handleAiFailure(loadout, 'match_start')
+    } else if (this.backendMode === 'live' && !this.inAiBackoff()) {
+      setAiStatus('live')
+    }
+
+    this.matchBootBusy = false
     this.startRound(true)
   }
 
@@ -1110,7 +1174,6 @@ export class FightScene extends Phaser.Scene {
       }
       void this.requestMemoryPatch(memory)
     }
-    this.patchBanner.setVisible(false)
     this.patchStatus.setVisible(true)
     this.clearCombatAssets()
     this.hitStopMs = 0
@@ -1189,6 +1252,7 @@ export class FightScene extends Phaser.Scene {
       specialCooldown: 0,
       lastLeftTap: -1000,
       lastRightTap: -1000,
+      actionLockMs: 0,
     }
   }
 
@@ -1209,12 +1273,13 @@ export class FightScene extends Phaser.Scene {
     }
   }
 
-  private updateFighter(fighter: Fighter, opponent: Fighter, dt: number): void {
+  private updateFighter(fighter: Fighter, opponent: Fighter, dt: number, pauseInput = false): void {
     const seconds = dt / 1000
     fighter.stateTime += dt
     fighter.comboTimer = Math.max(0, fighter.comboTimer - dt)
     fighter.blockFlash = Math.max(0, fighter.blockFlash - dt)
     fighter.specialCooldown = Math.max(0, fighter.specialCooldown - dt)
+    fighter.actionLockMs = Math.max(0, fighter.actionLockMs - dt)
     fighter.displayHealth = Phaser.Math.Linear(fighter.displayHealth, fighter.health, Math.min(1, seconds * 5.2))
 
     if (fighter.comboTimer <= 0) {
@@ -1227,6 +1292,7 @@ export class FightScene extends Phaser.Scene {
 
     if (fighter.state === 'hit' && fighter.stateTime >= this.hitStunFor(fighter)) {
       this.setState(fighter, this.recoveryState(fighter))
+      fighter.actionLockMs = fighter.id === 'p1' ? 520 : 200
     }
 
     if (fighter.state === 'knockdown') {
@@ -1244,6 +1310,7 @@ export class FightScene extends Phaser.Scene {
       fighter.vx = 0
       if (fighter.stateTime > 250) {
         this.setState(fighter, 'idle')
+        if (fighter.id === 'p1') fighter.actionLockMs = Math.max(fighter.actionLockMs, 320)
       }
       return
     }
@@ -1256,10 +1323,19 @@ export class FightScene extends Phaser.Scene {
       return
     }
 
-    const canAct = fighter.state !== 'attack' && fighter.state !== 'hit'
+    const inputPaused = pauseInput && fighter.id === 'p1'
+    const canAct =
+      !inputPaused && fighter.state !== 'attack' && fighter.state !== 'hit' && fighter.actionLockMs <= 0
     if (canAct) {
       this.readMovement(fighter, dt)
       this.readActions(fighter, opponent)
+    } else if (inputPaused && fighter.grounded && fighter.state !== 'attack' && fighter.state !== 'hit') {
+      fighter.vx = Phaser.Math.Linear(fighter.vx, 0, Math.min(1, (dt / 1000) * 14))
+      fighter.x += fighter.vx * (dt / 1000)
+      if (Math.abs(fighter.vx) < 6) {
+        fighter.vx = 0
+        if (fighter.state === 'walk') this.setState(fighter, 'idle')
+      }
     } else {
       fighter.x += fighter.vx * seconds
       fighter.vx = Phaser.Math.Linear(fighter.vx, 0, Math.min(1, 9 * seconds))
@@ -1292,7 +1368,8 @@ export class FightScene extends Phaser.Scene {
 
   private async requestMemoryPatch(memory: ReturnType<MatchMemory['toPayload']>): Promise<void> {
     if (this.patchBusy || memory.rememberedTricks.length === 0) return
-    if (this.time.now - this.lastPatchRequestAt < this.patchMinGapMs) return
+    if (this.inAiBackoff()) return
+    if (this.time.now - this.lastPatchRequestAt < this.activePatchGapMs) return
     this.patchBusy = true
     setAiStatus('busy')
     const payload = { ...this.currentTelemetryPayload(), matchMemory: memory }
@@ -1304,11 +1381,12 @@ export class FightScene extends Phaser.Scene {
 
   private maybeRequestRivalPatch(now: number): void {
     if (this.patchBusy) return
+    if (this.inAiBackoff()) return
 
     this.roundHabitSnapshot = this.telemetry.habits()
     const pending = this.telemetry.pendingHabit(this.appliedReasonCodes)
     const urgent = pending !== null
-    const onCooldown = now - this.lastPatchRequestAt < this.patchMinGapMs
+    const onCooldown = now - this.lastPatchRequestAt < this.activePatchGapMs
 
     if (urgent && pending && !this.instantReflex.has(pending)) {
       this.rivalBrain.applyInstantCounter(pending)
@@ -1339,14 +1417,75 @@ export class FightScene extends Phaser.Scene {
     setAiStatus(this.backendMode)
   }
 
-  private async runPatchTurn(network: () => Promise<PatchProposal | null>): Promise<void> {
-    setAiStatus('busy')
-    const patch = await network()
-    if (!patch) {
-      this.backendMode = 'error'
-      setAiStatus('error')
+  private inAiBackoff(): boolean {
+    return this.time.now < this.aiBackoffUntil
+  }
+
+  private limitedStatusDetail(retryAfterMs?: number): string {
+    const remaining = Math.max(0, this.aiBackoffUntil - this.time.now)
+    const seconds = Math.ceil((retryAfterMs ?? remaining) / 1000)
+    return `429 · retry ~${seconds}s`
+  }
+
+  private registerAiBackoff(retryAfterMs: number): void {
+    const wait = Math.max(8_000, Math.min(90_000, retryAfterMs))
+    this.aiBackoffUntil = this.time.now + wait
+    this.activePatchGapMs = Math.max(this.patchMinGapMs, Math.min(18_000, wait * 0.45))
+    this.nextPatchAt = this.aiBackoffUntil
+    this.time.delayedCall(Math.min(wait, 4_000), () => {
+      if (this.inAiBackoff()) setAiStatus('limited', this.limitedStatusDetail())
+    })
+  }
+
+  private clearAiBackoff(): void {
+    this.aiBackoffUntil = 0
+    this.activePatchGapMs = this.patchMinGapMs
+  }
+
+  private handleAiFailure(failure: Extract<PatchFetchResult, { kind: 'failure' }>, context: 'match_start' | 'patch'): void {
+    if (failure.code === 'rate_limit') {
+      this.registerAiBackoff(failure.retryAfterMs ?? 22_000)
+      this.backendMode = 'live'
+      setAiStatus('limited', this.limitedStatusDetail(failure.retryAfterMs))
+      const banner =
+        context === 'match_start'
+          ? 'MATCH START · Cerebras rate limit (429)\nFight continues — local rival reflex; Kimi retries when cooldown ends.'
+          : 'PATCH SKIPPED · Cerebras busy (429)\nBacking off so the API can recover.'
+      this.patchBanner.setText(banner)
+      this.patchBanner.setVisible(true)
+      this.time.delayedCall(5500, () => {
+        if (this.mode === 'intro' || this.mode === 'fight') this.patchBanner.setVisible(false)
+      })
       return
     }
+
+    if (failure.code === 'timeout') {
+      this.registerAiBackoff(failure.retryAfterMs ?? 12_000)
+      setAiStatus('limited', 'Slow · retrying…')
+      this.backendMode = 'live'
+      return
+    }
+
+    this.backendMode = 'error'
+    setAiStatus('error', failure.message.slice(0, 48))
+    if (context === 'match_start') {
+      this.patchBanner.setText(`AI UNAVAILABLE\n${failure.message}`)
+      this.patchBanner.setVisible(true)
+      this.time.delayedCall(5000, () => this.patchBanner.setVisible(false))
+    }
+  }
+
+  private async runPatchTurn(network: () => Promise<PatchFetchResult>): Promise<void> {
+    if (this.inAiBackoff()) return
+    setAiStatus('busy')
+    const result = await network()
+    if (result.kind === 'failure') {
+      this.handleAiFailure(result, 'patch')
+      return
+    }
+    this.clearAiBackoff()
+    if (this.backendMode === 'live') setAiStatus('live')
+    const patch = result.data
     if (patch.decision === 'hold') return
     this.applyPatchProposal(patch)
   }
@@ -1816,15 +1955,16 @@ export class FightScene extends Phaser.Scene {
   }
 
   private hitStunFor(fighter: Fighter): number {
+    const human = fighter.id === 'p1' ? 1.22 : 1
     if (fighter.hitReaction === 'air') {
-      return 390
+      return Math.round(420 * human)
     }
 
     if (fighter.hitReaction === 'crouch') {
-      return 255
+      return Math.round(320 * human)
     }
 
-    return 290
+    return Math.round(380 * human)
   }
 
   private recoveryState(fighter: Fighter): FighterState {
@@ -2276,10 +2416,24 @@ export class FightScene extends Phaser.Scene {
     this.overlay.fillStyle(0x020617, 0.72)
     this.overlay.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT)
 
-    this.message.setText('RIVAL PATCH')
-    this.selectInfo.setText('A/D pick fighter · ENTER / CLICK TO FIGHT\nVS AI rival · Kimi patches mid-match')
-    this.drawSelectCard(88, 184, 336, this.selected.p1, 'YOU', false, this.selectLabelP1)
-    this.drawSelectCard(536, 184, 336, this.selected.p2, 'AI RIVAL', true, this.selectLabelP2)
+    if (this.matchBootBusy) {
+      const dots = '.'.repeat(1 + (Math.floor(time / 420) % 3))
+      this.message.setText('LOADING')
+      this.selectInfo.setText(
+        `OpenClaw → Kimi on Cerebras${dots}\nDrafting ${FIGHTERS[this.selected.p2].name} rival brain — hold on\n(your pick is locked)`,
+      )
+      this.overlay.fillStyle(0x020617, 0.35)
+      this.overlay.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT)
+    } else {
+      this.message.setText('RIVAL PATCH')
+      this.selectInfo.setText(
+        'A/D pick YOUR fighter · Rival = random (never same as you)\nENTER · OpenClaw calls Kimi to draft rival brain, then fight',
+      )
+    }
+    const rivalLabel = this.matchBootBusy ? 'AI RIVAL · LOCKED' : 'AI RIVAL · RANDOM'
+    const youLabel = this.matchBootBusy ? 'YOU · LOCKED' : 'YOU'
+    this.drawSelectCard(88, 184, 336, this.selected.p1, youLabel, false, this.selectLabelP1)
+    this.drawSelectCard(536, 184, 336, this.selected.p2, rivalLabel, true, this.selectLabelP2)
 
     this.selectP1.setVisible(true)
     this.selectP1.setTexture(`${this.selected.p1}-idle-${Math.floor(time / 120) % SPRITE_FRAME_COUNTS.idle}`)

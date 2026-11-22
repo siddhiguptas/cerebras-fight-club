@@ -9,7 +9,7 @@
     "gateway": "openclaw gateway run",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "vitest run server/patchLogic.test.ts",
+    "test": "vitest run server/patchLogic.test.ts server/patchValidate.test.ts server/cerebrasErrors.test.ts",
     "test:api": "vitest run server/api.test.ts",
     "test:rival": "playwright test tests/rival-patch.spec.ts --reporter=line",
     "test:animation": "playwright test tests/jump-check.spec.ts --reporter=line",

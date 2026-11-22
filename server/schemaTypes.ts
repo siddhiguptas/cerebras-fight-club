@@ -48,3 +48,10 @@ export const telemetrySchema = z.object({
 export const complaintSchema = telemetrySchema.extend({
   complaint: z.string().min(1).max(280),
 })
+
+/** New match — Kimi drafts rival tuning before round 1 (OpenClaw + Cerebras). */
+export const matchStartSchema = z.object({
+  sessionId: z.string(),
+  p1Fighter: z.string().min(1).max(32),
+  p2Fighter: z.string().min(1).max(32),
+})

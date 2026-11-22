@@ -4,6 +4,12 @@ export type { AiStatus }
 
 let complaintHandler: ((text: string) => void) | null = null
 let matchActive = false
+let complaintInputFocused = false
+
+/** True while the dev complaint field is focused — fight input and rival AI should pause. */
+export function isComplaintInputFocused(): boolean {
+  return complaintInputFocused
+}
 
 const rootId = 'rival-patch-panel'
 
@@ -18,6 +24,7 @@ export function setAiStatus(status: AiStatus, detail = ''): void {
     offline: 'AI offline',
     live: 'Kimi live',
     busy: 'Patching…',
+    limited: 'Cerebras busy',
     error: 'AI error',
   }
   chip.dataset.state = status
@@ -58,6 +65,21 @@ export function mountRivalPanel(): void {
     if (!text) return
     complaintHandler(text)
     input.value = ''
+    input.blur()
+  })
+
+  input?.addEventListener('focus', () => {
+    complaintInputFocused = true
+    panel.dataset.typing = 'true'
+  })
+
+  input?.addEventListener('blur', () => {
+    complaintInputFocused = false
+    panel.dataset.typing = 'false'
+  })
+
+  input?.addEventListener('keydown', (event) => {
+    event.stopPropagation()
   })
 
   host.appendChild(panel)

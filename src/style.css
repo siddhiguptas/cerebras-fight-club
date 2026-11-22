@@ -171,9 +171,20 @@ body {
   color: #fde68a;
 }
 
+#rival-patch-panel .rp-status[data-state='limited'] {
+  color: #fdba74;
+}
+
 #rival-patch-panel .rp-status[data-state='offline'],
 #rival-patch-panel .rp-status[data-state='error'] {
   color: #f87171;
+}
+
+#rival-patch-panel[data-typing='true'] .rp-status::after {
+  content: ' · round paused';
+  color: #fde68a;
+  text-transform: none;
+  letter-spacing: 0.02em;
 }
 
 #rival-patch-panel .rp-complaint-row {

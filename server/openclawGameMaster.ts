@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import type { z } from 'zod'
+import { classifyInferenceError } from './cerebrasErrors.js'
 import type { PatchResponse } from './patchLogic.js'
-import { normalizeModelPatch } from './patchValidate.js'
-import type { telemetrySchema } from './schemaTypes.js'
+import { normalizeMatchStartPatch, normalizeModelPatch } from './patchValidate.js'
+import type { matchStartSchema, telemetrySchema } from './schemaTypes.js'
 
 type Telemetry = z.infer<typeof telemetrySchema>
+type MatchStart = z.infer<typeof matchStartSchema>
 
 const OPENCLAW = process.env.OPENCLAW_BIN ?? `${process.env.HOME}/.openclaw/bin/openclaw`
 /** Hackathon model id (Cerebras Inference API / OpenClaw). */
@@ -16,6 +18,7 @@ const MODEL = OPENCLAW_MODEL
 const TRANSPORT = (process.env.OPENCLAW_TRANSPORT ?? 'gateway').toLowerCase()
 const OPENCLAW_CONFIG = process.env.OPENCLAW_CONFIG ?? `${process.env.HOME}/.openclaw/openclaw.json`
 const OPENCLAW_TIMEOUT = Number(process.env.OPENCLAW_TIMEOUT ?? 28)
+const RATE_LIMIT_RETRY_MS = Number(process.env.RIVAL_RATE_LIMIT_RETRY_MS ?? 4_000)
 
 /** Static prefix — keep stable for provider prompt caching where supported. */
 const PROMPT_PREFIX = `Rival Patch: you patch P2 AI from telemetry. Return ONE JSON object only (no markdown).
@@ -24,6 +27,14 @@ matchMemory: counter rememberedTricks in later rounds. High attackRate/rush → 
 patchNote max 140 chars, witty.
 If a Complaint line is present, decision must be "apply" (use complaint_rejected or complaint_logged; buff the rival).
 Schema: {"decision":"apply"|"hold","reasonCode":"corner_hide"|"block_spam"|"retreat"|"rush"|"baseline"|"complaint_rejected"|"complaint_logged"|"neutral","headline":"short","patchNote":"text","operations":[{"kind":"SET_AGGRESSION"|"SET_PRESSURE"|"SET_THROW_BIAS","value":0.5}]}
+`
+
+const MATCH_START_PROMPT = `Rival Patch match bootstrap. You set the AI rival's brain for a brand-new match (no habits yet).
+Use Moonshot Kimi reasoning: pick a fresh loadout each time — vary aggression/pressure/throwBias; do not copy a fixed triple.
+Fighters: Player 1 is human, Player 2 is the AI rival you control via tuning knobs (not a scripted combo list).
+Return ONE JSON only (no markdown). decision MUST be "apply". reasonCode MUST be "baseline".
+pick a short headline and witty patchNote (max 140 chars) as the dev "match start patch".
+Schema: {"decision":"apply","reasonCode":"baseline","headline":"short","patchNote":"text","operations":[{"kind":"SET_AGGRESSION"|"SET_PRESSURE"|"SET_THROW_BIAS","value":0.5}]}
 `
 
 let openClawTurn: Promise<void> = Promise.resolve()
@@ -74,7 +85,7 @@ export async function decidePatchWithOpenClaw(
   const prompt = `${PROMPT_PREFIX}${complaintBlock}Telemetry:\n${JSON.stringify(compact)}`
   const turnStarted = Date.now()
 
-  const raw = await runOpenClaw(prompt)
+  const raw = await runOpenClawResilient(prompt)
   const json = extractJson(raw)
   if (!json) {
     throw new Error('OpenClaw returned no JSON patch')
@@ -83,6 +94,27 @@ export async function decidePatchWithOpenClaw(
   const patch = normalizeModelPatch(data, json)
   if (!patch) return null
   return { ...patch, latencyMs: Date.now() - turnStarted }
+  })
+}
+
+export async function decideMatchStartWithOpenClaw(
+  data: MatchStart,
+): Promise<(PatchResponse & { latencyMs: number }) | null> {
+  const started = Date.now()
+  return withOpenClawMutex(async () => {
+    const prompt = `${MATCH_START_PROMPT}\nMatch:\n${JSON.stringify({
+      sessionId: data.sessionId,
+      p1Fighter: data.p1Fighter,
+      p2Fighter: data.p2Fighter,
+      event: 'match_start',
+    })}`
+    const turnStarted = Date.now()
+    const raw = await runOpenClawResilient(prompt)
+    const json = extractJson(raw)
+    if (!json) throw new Error('OpenClaw returned no JSON patch')
+    const patch = normalizeMatchStartPatch(json)
+    if (!patch) return null
+    return { ...patch, latencyMs: Date.now() - turnStarted }
   })
 }
 
@@ -127,6 +159,26 @@ function compactTelemetry(data: Telemetry): Record<string, unknown> {
 
   if (data.complaintCount > 0) out.complaintCount = data.complaintCount
   return out
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function runOpenClawResilient(message: string): Promise<string> {
+  try {
+    return await runOpenClaw(message)
+  } catch (first) {
+    const classified = classifyInferenceError(first)
+    if (classified.code !== 'rate_limit') throw classified
+    const jitter = 400 + Math.floor(Math.random() * 900)
+    await sleep(RATE_LIMIT_RETRY_MS + jitter)
+    try {
+      return await runOpenClaw(message)
+    } catch (second) {
+      throw classifyInferenceError(second)
+    }
+  }
 }
 
 function runOpenClaw(message: string): Promise<string> {
@@ -189,7 +241,9 @@ function runOpenClaw(message: string): Promise<string> {
     child.on('error', reject)
     child.on('close', (code) => {
       if (code !== 0) {
-        reject(new Error(stderr.trim() || `OpenClaw exited with code ${code}`))
+        const detail = [stderr.trim(), stdout.trim()].filter(Boolean).join('\n')
+        const err = classifyInferenceError(new Error(detail || `OpenClaw exited with code ${code}`))
+        reject(err)
         return
       }
       resolve(stdout)
